@@ -605,6 +605,37 @@ cdef class Capture:
         out_frame.timestamp = uvc_frame.capture_time.tv_sec + <double>uvc_frame.capture_time.tv_usec * 1e-6
         return out_frame
 
+    def get_frame_timeout(self,timeout=0):
+        cdef int status, j_width,j_height,jpegSubsamp,header_ok
+        cdef int timeout_usec
+        if (timeout == -1):
+            timeout_usec = int(-1)
+        else:
+            timeout_usec = int(timeout*1e6) #sec to usec
+        if not self._stream_on:
+            self._start()
+        cdef uvc.uvc_frame *uvc_frame = NULL
+        #when this is called we will overwrite the last jpeg buffer! This can be dangerous!
+        with nogil:
+            status = uvc.uvc_stream_get_frame(self.strmh,&uvc_frame,timeout_usec)
+        if status in [uvc.UVC_ERROR_BUSY, uvc.UVC_ERROR_TIMEOUT]:
+            return None
+        elif status !=uvc.UVC_SUCCESS:
+            raise ValueError(status)
+            #raise StreamError(uvc_error_codes[status])
+        if uvc_frame is NULL:
+            raise StreamError("Frame pointer is NULL")
+        ##check jpeg header
+        header_ok = turbojpeg.tjDecompressHeader2(self.tj_context,  <unsigned char *>uvc_frame.data, uvc_frame.data_bytes, &j_width, &j_height, &jpegSubsamp)
+        if not (header_ok >=0 and uvc_frame.width == j_width and uvc_frame.height == j_height):
+            raise StreamError("JPEG header corrupt.")
+
+        cdef Frame out_frame = Frame()
+        out_frame.tj_context = self.tj_context
+        out_frame.attach_uvcframe(uvc_frame = uvc_frame,copy=True)
+        out_frame.timestamp = uvc_frame.capture_time.tv_sec + <double>uvc_frame.capture_time.tv_usec * 1e-6
+        return out_frame
+
 
     cdef _enumerate_controls(self):
 
